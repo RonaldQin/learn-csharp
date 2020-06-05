@@ -1,0 +1,13 @@
+<AnalysisConfigXml xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <AnalysisAssemblys>
+    <AnalysisAssembly>
+      <assemblePath>
+        <path>C:\Users\qinbiao\AppData\Local\Temp\DotCheck\Resources\Analyzer\Analyzer\Analyzer2.dll</path>
+        <path>C:\Users\qinbiao\AppData\Local\Temp\DotCheck\Resources\Analyzer\Analyzer\ICSharpCode.SharpZipLib.dll</path>
+        <path>C:\Users\qinbiao\AppData\Local\Temp\DotCheck\Resources\Analyzer\Analyzer\lib.dll</path>
+        <path>C:\Users\qinbiao\AppData\Local\Temp\DotCheck\Resources\Analyzer\Analyzer\Newtonsoft.Json.dll</path>
+        <path>C:\Users\qinbiao\AppData\Local\Temp\DotCheck\Resources\Analyzer\Analyzer\NLog.dll</path>
+      </assemblePath>
+    </AnalysisAssembly>
+  </AnalysisAssemblys>
+</AnalysisConfigXml>

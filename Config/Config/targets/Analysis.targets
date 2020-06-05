@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <TargetsImported>true</TargetsImported>
+  </PropertyGroup>
+  <!-- Set defaults if explicit values have not been provided -->
+  <PropertyGroup Condition=" $(TempPath) != '' ">
+    <ConfigPath Condition=" $(ConfigPath) == '' ">$(TempPath)\Config</ConfigPath>
+    <OutputPath Condition=" $(OutputPath) == '' ">$(TempPath)\out</OutputPath>
+
+    <!-- Specify the ItemGroups to be analyzed -->
+    <AnalysisFileItemTypes Condition=" $(AnalysisFileItemTypes) == '' ">AndroidEnvironment;AndroidJavaSource;AndroidResource;Build;ClCompile;ClInclude;Compile;Content;DeploymentExtensionConfiguration;EmbeddedResource;EntityDeploy;None;PostDeploy;PRIResource;PreDeploy;RefactorLog;Resource;Script;ScriptCode;TypeScriptCompile;$(AdditionalAnalysisFileItemTypes)</AnalysisFileItemTypes>
+  </PropertyGroup>
+
+  <!-- **************************************************************************** -->
+  <!-- Using tasks -->
+  <!-- **************************************************************************** -->
+  <PropertyGroup Condition=" $(TempPath) != '' AND $(BuildTasksAssemblyFile) == '' ">
+    <!-- Assume that the tasks assembly is in the same location as this targets file
+         or in a parent directory unless another location has already been specified. -->
+    <BuildTasksAssemblyFile>$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), MsbuildTask.dll))\MsbuildTask.dll</BuildTasksAssemblyFile>
+  </PropertyGroup>
+
+  <!-- Unescape the paths to work around the issue "MSBuild 4.0 UsingTask cannot have a path with parentheses".
+       See https://connect.microsoft.com/VisualStudio/feedback/details/713690/msbuild-4-0-usingtask-cannot-have-a-path-with-parentheses -->
+  <!--UsingTask TaskName="WriteProjectInfoFile" AssemblyFile="$([MSBUILD]::Unescape($(BuildTasksAssemblyFile)))"/>
+  <UsingTask TaskName="IsTestFileByName" AssemblyFile="$([MSBUILD]::Unescape($(BuildTasksAssemblyFile)))" /-->
+  <UsingTask TaskName="GetAnalyzerSettings" AssemblyFile="$([MSBUILD]::Unescape($(BuildTasksAssemblyFile)))" />
+  <!--UsingTask TaskName="MakeUniqueDir" AssemblyFile="$([MSBUILD]::Unescape($(BuildTasksAssemblyFile)))" />
+  <UsingTask TaskName="WriteZeroLengthFiles" AssemblyFile="$([MSBUILD]::Unescape($(BuildTasksAssemblyFile)))" /-->
+
+  <!-- **************************************************************************** -->
+  <!-- **************************************************************************** -->
+  <!-- Targets -->
+  <!-- **************************************************************************** -->
+  <!-- **************************************************************************** -->
+
+  <Target Name="SkippingAnalysis" BeforeTargets="Build"
+          Condition=" $(TempPath) == '' ">
+    <Message Importance="high" Text="Skipping dumping compile outputs because TempPath has not been specified" />
+  </Target>
+
+  <Target Name="FailIfLowerThanMSBuild14"
+          Condition=" $(TempPath) != '' AND $(MSBuildToolsVersion) != '14.0' AND $(MSBuildToolsVersion) != '15.0' AND $(MSBuildToolsVersion) != 'Current'"
+          BeforeTargets="Build">
+    <Message Importance="high" Text="Current MSBuildToolsVersion: $(MSBuildToolsVersion)" />
+    <Message Importance="high" Text="Current MSBuildAssemblyVersion: $(MSBuildAssemblyVersion)" />
+    <Error Text="analysis is only supported with MSBuild 14 or later." />
+  </Target>
+
+  <!-- **************************************************************************** -->
+  <!-- Categorize as a product or test project -->
+  <!-- **************************************************************************** -->
+  <!-- Work out if the project is a test or Fakes project. -->
+  <!-- Fakes projects are auto-generated. If a project is recognized as a Fakes
+       project then it will be marked as a test project and excluded.
+       For test projects, if it is explicitly marked then use that value, otherwise:
+          * check if the name matches the regular expression in the config file, or
+          * check if it has one of the expected project types guids.
+         If either is true then the project is a test project, otherwise
+         it is a product project.
+
+         This target is a utility target: it won't be executed unless a target that
+         depends on it is executed.
+    -->
+  <!--Target Name="CategoriseProject"
+          Condition=" $(TempPath) != '' ">
+    <PropertyGroup>
+      <IsFakesProject Condition="$(AssemblyName.EndsWith('.fakes', System.StringComparison.OrdinalIgnoreCase))">true</IsFakesProject>
+    </PropertyGroup>
+    <PropertyGroup Condition="$(IsFakesProject) == 'true'">
+      <SonarQubeTestProject>true</SonarQubeTestProject>
+      <SonarQubeExclude>true</SonarQubeExclude>
+    </PropertyGroup>
+    <PropertyGroup>
+      <IsTempProject Condition="$(MSBuildProjectFile.EndsWith('.tmp_proj', System.StringComparison.OrdinalIgnoreCase))">true</IsTempProject>
+      <IsTempProject Condition="$(MSBuildProjectFile.EndsWith('_wpftmp.csproj', System.StringComparison.OrdinalIgnoreCase))">true</IsTempProject>
+      <IsTempProject Condition="$(MSBuildProjectFile.EndsWith('_wpftmp.vbproj', System.StringComparison.OrdinalIgnoreCase))">true</IsTempProject>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$(IsTempProject) == 'true' AND $(SonarQubeExclude)==''" >
+      <SonarQubeExclude>true</SonarQubeExclude>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" $(SonarQubeTestProject) == '' ">
+      <SonarQubeMsTestProjectTypeGuid>3AC096D0-A1C2-E12C-1390-A8335801FDAB</SonarQubeMsTestProjectTypeGuid>
+      <SonarQubeTestProject Condition=" $(ProjectTypeGuids.ToUpperInvariant().Contains('$(SonarQubeMsTestProjectTypeGuid)')) ">true</SonarQubeTestProject>
+      <tmpSQServiceList>@(Service)</tmpSQServiceList>
+      <SonarQubeTestProject Condition="$(tmpSQServiceList.ToUpperInvariant().Contains('{82A7F48D-3B50-4B1E-B82E-3ADA8210C358}')) ">true</SonarQubeTestProject>
+      <tmpSQProjectCapabilities>@(ProjectCapability)</tmpSQProjectCapabilities>
+      <SonarQubeTestProject Condition="$(tmpSQProjectCapabilities.ToUpperInvariant().Contains('TESTCONTAINER')) ">true</SonarQubeTestProject>
+    </PropertyGroup>
+    <IsTestFileByName Condition=" $(SonarQubeTestProject) == '' "
+        AnalysisConfigDir="$(ConfigPath)"
+        FullFilePath="$(MSBuildProjectFullPath)">
+      <Output TaskParameter="IsTest" PropertyName="SonarQubeTestProject" />
+    </IsTestFileByName>
+  </Target-->
+
+  <!--Target Name="CalculateSonarQubeFilesToAnalyze"
+        Condition=" $(TempPath) != '' ">
+    <ItemGroup Condition="('$(AnalysisFileItemTypes)' != '')">
+      <MyAnalysisFileItems Include="$(AnalysisFileItemTypes)" />
+      <MyAnalysisFiles Include="@(%(MyAnalysisFileItems.Identity))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <SQFullIntermediateOutputPath>$([System.IO.Path]::Combine($(MSBuildProjectDirectory),$(BaseIntermediateOutputPath)))</SQFullIntermediateOutputPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <SQIntermediateFiles Include="$(SQFullIntermediateOutputPath)**\*.*" />
+      <SQIntermediateFiles Include="$(BaseIntermediateOutputPath)**\*.*" />
+      <MyAnalysisFiles Remove="@(SQIntermediateFiles)" />
+    </ItemGroup>
+    <PropertyGroup>
+      <AnalysisFilesExist Condition=" @(MyAnalysisFiles) != '' ">true</AnalysisFilesExist>
+    </PropertyGroup>
+  </Target-->
+
+  <!--Target Name="CreateProjectSpecificDirs" BeforeTargets="OverrideRoslynCodeAnalysisProperties;WriteSonarQubeProjectData"  Condition=" $(TempPath) != '' ">
+    <MakeUniqueDir Path="$(OutputPath)">
+      <Output TaskParameter="UniquePath" PropertyName="ProjectSpecificOutDir" />
+      <Output TaskParameter="UniqueName" PropertyName="UniqueName" />
+    </MakeUniqueDir>
+    <PropertyGroup>
+      <ProjectSpecificConfDir>$(ConfigPath)\$(UniqueName)</ProjectSpecificConfDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(ProjectSpecificConfDir)" />
+  </Target-->
+
+  <!--Target Name="WriteSonarQubeProjectData"
+          DependsOnTargets="CategoriseProject;CalculateSonarQubeFilesToAnalyze;CreateProjectSpecificDirs"
+          AfterTargets="Build"
+          Condition=" $(TempPath) != '' ">
+
+ 
+    <PropertyGroup>
+    
+      <AnalysisFileList>$(ProjectSpecificOutDir)\FilesToAnalyze.txt</AnalysisFileList>
+    </PropertyGroup>
+    <WriteLinesToFile Condition=" $(AnalysisFilesExist) == 'true' "
+            File="$(AnalysisFileList)"
+            Lines="%(MyAnalysisFiles.FullPath)"
+            Overwrite="false"
+            Encoding="Unicode" />
+
+    <ItemGroup Condition=" $(AnalysisFilesExist) == 'true' ">
+      <AnalysisResults Include="$(AnalysisFileList)">
+        <Id>FilesToAnalyze</Id>
+      </AnalysisResults>
+    </ItemGroup>
+
+    <Message Importance="low" Condition=" $(SonarQubeTestProject) == 'true' "
+             Text="SonarQube: project will be treated as a test project : $(MSBuildProjectName)" />
+    <CallTarget Targets="FixUpTestProjectOutputs" />
+    
+    <WriteProjectInfoFile ProjectName="$(MSBuildProjectName)"
+       FullProjectPath="$(MSBuildProjectFullPath)"
+       ProjectLanguage="$(Language)"
+       ProjectGuid="$(ProjectGuid)"
+       SolutionConfigurationContents="$(CurrentSolutionConfigurationContents)"
+       IsTest="$(SonarQubeTestProject)"
+       IsExcluded="$(SonarQubeExclude)"
+       AnalysisResults="@(AnalysisResults)"
+       AnalysisSettings="@(SonarQubeSetting)"
+       OutputFolder="$(ProjectSpecificOutDir)"
+       CodePage="$(CodePage)"
+       Configuration="$(Configuration)"
+       Platform="$(Platform)"
+       TargetFramework="$(TargetFramework)" />
+  </Target>
+
+  <Target Name="FixUpTestProjectOutputs" Condition="$(SonarQubeTestProject)=='true'" >
+    <Message Importance="low" Text="Fixing up test project outputs..." />
+
+    <ItemGroup>
+      <SQTestMetricFiles Include="$(ProjectSpecificOutDir)\*\metrics.pb" />
+      <SQTestMetricFiles Include="$(ProjectSpecificOutDir)\*\token-cpd.pb" />
+    </ItemGroup>
+
+    <Message Importance="low" Text="Selected test metric file: @(SQTestMetricFiles)" />
+    <WriteZeroLengthFiles FullFilePaths="@(SQTestMetricFiles)" />
+  </Target-->
+
+  <PropertyGroup>
+    <SQLanguage Condition="$(Language) == 'C#'">cs</SQLanguage>
+    <SQLanguage Condition="$(Language) == 'VB'">vbnet</SQLanguage>
+  </PropertyGroup>
+
+  <Target Name="OverrideRoslynCodeAnalysisProperties"
+        Condition=" $(TempPath) != '' "
+        AfterTargets="ResolveCodeAnalysisRuleSet"
+        BeforeTargets="CoreCompile">
+
+    <PropertyGroup>
+      <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+      <WarningsAsErrors></WarningsAsErrors>
+      <WarningLevel>4</WarningLevel>
+    </PropertyGroup>
+    <CallTarget Targets="SetRoslynCodeAnalysisProperties" />
+  </Target>
+
+  <Target Name="SetRoslynCodeAnalysisProperties">
+    <GetAnalyzerSettings AnalysisConfigDir="$(ConfigPath)">
+      <Output TaskParameter="AnalysisAssemblyPath" ItemName="SQAnalyzerFilePaths" />
+    </GetAnalyzerSettings>
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" />
+      <AdditionalFiles Remove="@(AdditionalFiles)" />
+      <Analyzer Include="@(SQAnalyzerFilePaths)" />
+    </ItemGroup>
+
+  </Target>
+
+  <Target Name="SetRazorCodeAnalysisProperties" BeforeTargets="RazorCoreCompile" AfterTargets="CopyFilesToOutputDirectory">
+    <PropertyGroup Condition=" $(ErrorLog) == $(SonarCompileErrorLog) ">
+      <RazorSonarCompileErrorLog>$(TargetDir)$(TargetName)$(RazorTargetNameSuffix)$(TargetExt).RoslynCA.json</RazorSonarCompileErrorLog>
+      <ErrorLog>$(RazorSonarCompileErrorLog)</ErrorLog>
+    </PropertyGroup>
+  </Target>
+  <!-- **************************************************************************** -->
+  <!-- End of Roslyn analysis section-->
+  <!-- **************************************************************************** -->
+
+</Project>
